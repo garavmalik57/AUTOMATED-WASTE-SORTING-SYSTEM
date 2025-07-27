@@ -1,0 +1,274 @@
+;--------------------------------------------------------------------
+; Program: Waste Sorting System
+; Device: 8051 Microcontroller
+; Function: Reads sensor inputs to identify waste type (Plastic, Metal, Wet),
+; controls buzzer, LEDs, and a servo motor, and displays the result
+; on an LCD.
+; Ports:
+; - P1: Sensor inputs (IR sensor, moisture sensor, Hall sensor)
+; - P2: Outputs (Buzzer, LEDs, Servo control signal)
+; - P3: LCD control signals (P3.5 = RS, P3.6 = RW, P3.7 = Enable) and other signals
+; - P0: LCD data bus
+;--------------------------------------------------------------------
+
+ORG 0000H ; Set starting address for reset vector
+LJMP MAIN ; Jump to main program
+
+;--------------------------------------------------------------------
+; Port Definitions and Memory Setup
+;--------------------------------------------------------------------
+ORG 0030H ; Starting address for main program
+
+MAIN:
+MOV P1, #0FFH ; Set Port 1 for sensor inputs (all bits high for input mode)
+MOV P2, #00H ; Clear Port 2 (ensure buzzer, LEDs, and servo are off initially)
+MOV P3, #00H ; Clear Port 3 (reset control signals for LCD and others)
+MOV P0, #00H ; Clear Port 0 (LCD data port initialization)
+
+ACALL LCD_CLEAR ; Clear the LCD display at startup
+
+;--------------------------------------------------------------------
+; Main Loop: Continuously Check Sensors and Process Waste Type
+;--------------------------------------------------------------------
+START:
+CLR P2.0 ; Ensure the buzzer is OFF (clear bit 0 of Port 2)
+CLR P2.7 ; Ensure the servo control signal is LOW (clear bit 7 of Port 2)
+
+; Check IR sensor (assumed connected to P1.3)
+JB P1.3, CHECK_MOISTURE ; If bit 3 of Port 1 is high, check moisture sensor next
+SETB P2.3 ; Otherwise, turn ON the red LED (indicating Plastic waste)
+MOV R6, #1 ; Set waste type to 1 (Plastic)
+SJMP ALERT ; Jump to alert processing routine
+
+;--------------------------------------------------------------------
+; Check Moisture Sensor (assumed connected to P1.0)
+;--------------------------------------------------------------------
+CHECK_MOISTURE:
+JB P1.0, CHECK_HALL ; If moisture sensor is active, jump to check Hall sensor
+SETB P2.4 ; Otherwise, turn ON the blue LED (indicating Wet waste)
+MOV R6, #3 ; Set waste type to 3 (Wet)
+SJMP ALERT ; Jump to alert processing routine
+
+;--------------------------------------------------------------------
+; Check Hall Sensor (assumed connected to P1.5)
+;--------------------------------------------------------------------
+CHECK_HALL:
+JB P1.5, NO_ALERT ; If Hall sensor is high, then no valid object is detected; jump to NO_ALERT
+SETB P2.5 ; Otherwise, turn ON the green LED (indicating Metal waste)
+MOV R6, #2 ; Set waste type to 2 (Metal)
+SJMP ALERT ; Jump to alert processing routine
+
+;--------------------------------------------------------------------
+; No Valid Object Detected: Display "NO OBJECT" Message
+;--------------------------------------------------------------------
+NO_ALERT:
+CLR P2.0 ; Make sure the buzzer is OFF
+ACALL LCD_DISPLAY_NOOBJ ; Display "NO OBJECT" message on the LCD
+ACALL DELAY_3S ; Wait for about 3 seconds so the message is visible
+SJMP START ; Restart the main loop
+
+;--------------------------------------------------------------------
+; Alert Routine: Process Detected Waste
+;--------------------------------------------------------------------
+ALERT:
+SETB P2.0 ; Turn ON the buzzer (set bit 0 of Port 2)
+ACALL SERVO_PWM ; Adjust the servo using PWM based on the waste type in R6
+ACALL LCD_DISPLAY ; Display the corresponding waste type on the LCD
+ACALL DELAY_3S ; Wait for about 3 seconds to allow viewing of the message and servo action
+CLR P2.0 ; Turn OFF the buzzer
+CLR P2.3 ; Turn OFF red LED (Plastic)
+CLR P2.4 ; Turn OFF blue LED (Wet)
+CLR P2.5 ; Turn OFF green LED (Metal)
+SJMP START ; Restart the main loop
+
+;--------------------------------------------------------------------
+; Servo PWM Control Subroutines
+; Generates a pulse of a specific width based on waste type
+;--------------------------------------------------------------------
+
+; For Plastic (Waste Type 1): ~1.333 ms pulse width
+SERVO_PWM:
+CJNE R6, #1, CHECK_METAL_PWM ; If R6 is not 1, check next waste type
+SETB P2.7 ; Start servo pulse (set bit 7 of Port 2)
+ACALL DELAY_1MS ; Delay for 1 millisecond
+ACALL DELAY_333US ; Additional delay of ~333 microseconds
+CLR P2.7 ; End servo pulse (clear bit 7)
+RET ; Return from subroutine
+
+; For Metal (Waste Type 2): ~1.666 ms pulse width
+CHECK_METAL_PWM:
+CJNE R6, #2, CHECK_WET_PWM ; If R6 is not 2, check next waste type
+SETB P2.7 ; Start servo pulse
+ACALL DELAY_1MS ; Delay for 1 millisecond
+ACALL DELAY_666US ; Additional delay of ~666 microseconds
+CLR P2.7 ; End servo pulse
+RET ; Return from subroutine
+
+; For Wet (Waste Type 3): 2 ms pulse width
+CHECK_WET_PWM:
+SETB P2.7 ; Start servo pulse
+ACALL DELAY_2MS ; Delay for 2 milliseconds
+CLR P2.7 ; End servo pulse
+RET ; Return from subroutine
+
+;--------------------------------------------------------------------
+; Software Delay Routines (Using Loops)
+;--------------------------------------------------------------------
+
+; Delay for approximately 333 microseconds
+DELAY_333US:
+MOV R5, #166 ; Set loop counter (value calibrated for 333μs delay)
+DELAY333_LOOP:
+DJNZ R5, DELAY333_LOOP ; Decrement R5 until zero
+RET ; Return from subroutine
+
+; Delay for approximately 666 microseconds
+DELAY_666US:
+MOV R4, #2 ; Outer loop counter
+DELAY666_LOOP:
+MOV R5, #166 ; Inner loop counter for delay
+DJNZ R5, $ ; Inner loop delay
+DJNZ R4, DELAY666_LOOP ; Repeat inner loop twice for ~666μs delay
+RET ; Return from subroutine
+
+; Delay for approximately 1 millisecond
+DELAY_1MS:
+MOV R4, #2 ; Outer loop count (calibrated for ~1ms)
+DELAY1_LOOP:
+MOV R5, #250 ; Inner loop counter for delay
+DJNZ R5, $ ; Inner loop delay
+DJNZ R4, DELAY1_LOOP ; Repeat loop for ~1ms delay
+RET ; Return from subroutine
+
+; Delay for approximately 2 milliseconds
+DELAY_2MS:
+MOV R4, #4 ; Outer loop count set to 4 for ~2ms total delay
+DELAY2_LOOP:
+MOV R5, #250 ; Inner loop counter for delay
+DJNZ R5, $ ; Inner loop delay
+DJNZ R4, DELAY2_LOOP ; Repeat loop for ~2ms delay
+RET ; Return from subroutine
+
+; A short generic delay used in LCD routines
+DELAY:
+MOV R5, #250 ; Set loop counter for a short delay
+DELAY_LOOP:
+DJNZ R5, DELAY_LOOP ; Countdown loop
+RET ; Return from subroutine
+
+;--------------------------------------------------------------------
+; Delay Routine Using Timer0 for Approximately 3 Seconds
+; (Assumes a 12MHz clock, each timer tick ˜ 1μs; one overflow ˜ 65.536ms)
+;--------------------------------------------------------------------
+DELAY_3S:
+MOV TMOD, #01H ; Configure Timer0 in mode 1 (16-bit timer mode)
+MOV R7, #42 ; Set counter for overflows (42 × ~65.536ms ˜ 3.02 seconds)
+LOOP_OVERFLOW:
+CLR TR0 ; Stop Timer0 before loading new values
+MOV TH0, #0 ; Clear Timer0 high byte
+MOV TL0, #0 ; Clear Timer0 low byte
+SETB TR0 ; Start Timer0
+WAIT_OVERFLOW:
+JNB TF0, WAIT_OVERFLOW ; Wait until Timer0 overflows (TF0 flag set)
+CLR TR0 ; Stop Timer0 after overflow
+CLR TF0 ; Clear Timer0 overflow flag
+DJNZ R7, LOOP_OVERFLOW ; Loop until the required number of overflows occur
+RET ; Return from subroutine
+
+;--------------------------------------------------------------------
+; LCD Routines for Displaying Messages and Sending Commands/Data
+;--------------------------------------------------------------------
+
+; LCD_CLEAR: Clears the LCD display and resets the cursor position
+LCD_CLEAR:
+MOV A, #01H ; Command to clear the display
+ACALL CMD_WRT ; Send the clear command to the LCD
+MOV A, #80H ; Command to set the cursor to the first position of the first row
+ACALL CMD_WRT ; Send the cursor set command
+RET ; Return from subroutine
+
+; LCD_DISPLAY: Displays the waste type (PLASTIC, METAL, or WET) on the LCD
+LCD_DISPLAY:
+ACALL LCD_CLEAR ; Clear the LCD before displaying new text
+MOV A, #83H ; Set cursor to the 4th position of the first row (DDRAM address 83H)
+ACALL CMD_WRT ; Send the command to set the cursor position
+
+MOV A, R6 ; Load the waste type indicator from R6
+CJNE A, #1, CHECK_METAL_DISPLAY ; If waste type is not 1 (Plastic), jump to check for Metal
+MOV DPTR, #TXT_PLASTIC ; Point DPTR to the "PLASTIC" string
+SJMP SEND_TEXT ; Jump to common text sending loop
+
+CHECK_METAL_DISPLAY:
+CJNE A, #2, SEND_WET ; If waste type is not 2 (Metal), jump to send Wet text
+MOV DPTR, #TXT_METAL ; Point DPTR to the "METAL" string
+SJMP SEND_TEXT ; Jump to text sending loop
+
+SEND_WET:
+MOV DPTR, #TXT_WET ; Otherwise, waste type is 3 (Wet); point DPTR to "WET"
+
+SEND_TEXT:
+LCD_SEND_LOOP:
+CLR A ; Clear accumulator A to prepare for reading a character
+MOVC A, @A+DPTR ; Read a character from code memory pointed by DPTR
+JZ DONE_SEND ; If character is 0 (end of string), finish sending text
+ACALL DT_WRT ; Write the character to the LCD (data mode)
+ACALL DELAY ; Short delay between characters
+INC DPTR ; Increment DPTR to the next character in the string
+SJMP LCD_SEND_LOOP ; Repeat until the end of the string
+DONE_SEND:
+RET ; Return from subroutine
+
+; LCD_DISPLAY_NOOBJ: Displays "NO OBJECT" on the LCD when no valid object is detected
+LCD_DISPLAY_NOOBJ:
+ACALL LCD_CLEAR ; Clear the LCD display
+MOV A, #83H ; Set cursor to 4th position of first row
+ACALL CMD_WRT ; Send the cursor position command
+MOV DPTR, #TXT_NOOBJ ; Point DPTR to the "NO OBJECT" string
+LCD_NO_LOOP:
+CLR A ; Clear accumulator A
+MOVC A, @A+DPTR ; Read a character from the string
+JZ NO_DONE ; If zero (end of string), finish
+ACALL DT_WRT ; Write the character to the LCD
+ACALL DELAY ; Short delay between characters
+INC DPTR ; Move to next character in the string
+SJMP LCD_NO_LOOP ; Loop until complete
+NO_DONE:
+RET ; Return from subroutine
+
+;--------------------------------------------------------------------
+; LCD Command/Data Write Routines
+; These routines send either commands or data to the LCD by
+; controlling Port 0 (data) and Port 3 (control signals).
+;--------------------------------------------------------------------
+
+; CMD_WRT: Write a command byte to the LCD
+CMD_WRT:
+MOV P0, A ; Place command byte from A onto Port 0
+CLR P3.5 ; RS = 0 (command mode)
+CLR P3.6 ; RW = 0 (write mode)
+SETB P3.7 ; Enable high to latch the command
+ACALL DELAY ; Wait for a short period to ensure latching
+CLR P3.7 ; Disable (latch command complete)
+RET ; Return from subroutine
+
+; DT_WRT: Write a data byte to the LCD
+DT_WRT:
+MOV P0, A ; Place data byte from A onto Port 0
+SETB P3.5 ; RS = 1 (data mode)
+CLR P3.6 ; RW = 0 (write mode)
+SETB P3.7 ; Enable high to latch the data
+ACALL DELAY ; Wait for a short period to ensure latching
+CLR P3.7 ; Disable (latch data complete)
+RET ; Return from subroutine
+
+;--------------------------------------------------------------------
+; Text Strings for LCD Display
+;--------------------------------------------------------------------
+ORG 0300H ; Starting address for text strings
+
+TXT_PLASTIC: DB "PLASTIC", 0 ; String for Plastic waste (terminated by 0)
+TXT_METAL:   DB "METAL ", 0  ; String for Metal waste (terminated by 0, spaces added for formatting)
+TXT_WET:     DB "WET ", 0    ; String for Wet waste (terminated by 0)
+TXT_NOOBJ:   DB "NO OBJECT", 0 ; String for no object detected (terminated by 0)
+
+END ; End of source file
